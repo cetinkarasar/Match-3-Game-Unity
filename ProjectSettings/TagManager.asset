@@ -3,7 +3,13 @@
 --- !u!78 &1
 TagManager:
   serializedVersion: 2
-  tags: []
+  tags:
+  - Triangle
+  - Star
+  - Circle
+  - Diamond
+  - Heart
+  - Star1
   layers:
   - Default
   - TransparentFX

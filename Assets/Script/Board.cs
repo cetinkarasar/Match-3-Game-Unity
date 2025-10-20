@@ -1,30 +1,24 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using System.Linq; // Duplikasyonlarý silmek için eklendi
 
 public class Board : MonoBehaviour
 {
-    //oyun alanýnýn geniþliði
     public int width;
-
-    //oyun alanýnýn yüksekliði
     public int height;
-
     public GameObject[] piecePrefabs;
-
-    //oyundaki tüm taþlarýn referanslarýný saklayacðýmýz 2 boyutlu matris
     private GameObject[,] allPieces;
 
     private Piece firstSelectedPiece;
     private Piece secondSelectedPiece;
 
-    //oyun baþladýðýnda çalýþan ana fonksiyon
     void Start()
     {
         allPieces = new GameObject[width, height];
         SetupBoard();
     }
-    //oyunn alanýný taþlarla dolduran fonksiyon
+
     private void SetupBoard()
     {
         for (int x = 0; x < width; x++)
@@ -32,31 +26,34 @@ public class Board : MonoBehaviour
             for (int y = 0; y < height; y++)
             {
                 Vector2 position = new Vector2(x, y);
+                int randomPieceIndex = GetRandomPieceIndexWithoutMatches(x, y);
+                GameObject pieceObject = Instantiate(piecePrefabs[randomPieceIndex], position, Quaternion.identity);
 
-                //Prefab dizimizden rastgale bir taþ þekli seçiyoruz
-                int random = Random.Range(0, piecePrefabs.Length);
+                pieceObject.transform.parent = this.transform;
+                pieceObject.name = "Piece (" + x + ", " + y + ")";
 
-                //Seçtiðimiz rastgale prefabý kullanarak sahnede yeni bir taþ oluþturuyoruz
-                GameObject piece = Instantiate(piecePrefabs[random], position, Quaternion.identity);
-                // oluþturulan taþý daha düzenli bir hiyarerþi için Board nesnesinin altýna alýyoruz
-                piece.transform.parent = this.transform;
-                piece.name = "Piece (" + x + ", " + y + ")";
-
-                //Oluþturduðumuz bu taþýn Piece script'ine ulaþýyoruz
-                Piece pieceScript = piece.GetComponent<Piece>();
-                //ona kendi kordinatlarýnýn ne olduðunu söylüoruz
+                Piece pieceScript = pieceObject.GetComponent<Piece>();
                 pieceScript.x = x;
                 pieceScript.y = y;
 
-                //oluþturduðumuz bu taþý konumuna göre matrisimize kaydediyoruz artýk ona x,y diyerek ulaþabiliriz
-                allPieces[x, y] = piece;
+                allPieces[x, y] = pieceObject;
             }
         }
     }
-    //Piece.cs script'i bir taþa týklandýðýnda bu fonksiyonu çaðýrýr
+    private int GetRandomPieceIndexWithoutMatches(int x, int y)
+    {
+        int randomPieceIndex = Random.Range(0, piecePrefabs.Length);
+        // Eðer soldaki iki komþu veya alttaki iki komþuyla eþleþiyorsa
+        while ((x > 1 && allPieces[x - 1, y].tag == piecePrefabs[randomPieceIndex].tag && allPieces[x - 2, y].tag == piecePrefabs[randomPieceIndex].tag) ||
+               (y > 1 && allPieces[x, y -1].tag == piecePrefabs[randomPieceIndex].tag && allPieces[x, y - 2].tag == piecePrefabs[randomPieceIndex].tag))
+        {
+            randomPieceIndex = Random.Range(0, piecePrefabs.Length);
+        }
+        return randomPieceIndex;
+    }
+
     public void PieceClicked(Piece piece)
     {
-        //Eðer daha önce bir taþ seçmediysek
         if (firstSelectedPiece == null)
         {
             firstSelectedPiece = piece;
@@ -64,10 +61,10 @@ public class Board : MonoBehaviour
         else
         {
             secondSelectedPiece = piece;
-            //iki taþýn yerini deðiþtirme iþlemi baþlat
             StartCoroutine(SwapAndCheckMatches());
         }
     }
+
     private IEnumerator SwapAndCheckMatches()
     {
         if (Vector2.Distance(firstSelectedPiece.transform.position, secondSelectedPiece.transform.position) > 1.1f)
@@ -76,31 +73,37 @@ public class Board : MonoBehaviour
             secondSelectedPiece = null;
             yield break;
         }
-        //Swap iþlemi
+
         yield return StartCoroutine(SwapPiecesAnimation(firstSelectedPiece, secondSelectedPiece));
 
-        //Eþleþme kontrolü
-        List<GameObject> firsPieceMatches = FindMatchesAt(firstSelectedPiece.x, firstSelectedPiece.y);
+        List<GameObject> firstPieceMatches = FindMatchesAt(firstSelectedPiece.x, firstSelectedPiece.y);
         List<GameObject> secondPieceMatches = FindMatchesAt(secondSelectedPiece.x, secondSelectedPiece.y);
 
-        //Eðer hiçbir eþleþme yoksa..
-        if (firsPieceMatches.Count < 3 && secondPieceMatches.Count < 3)
+        if (firstPieceMatches.Count < 3 && secondPieceMatches.Count < 3)
         {
-            //taþlarý geri al
             yield return StartCoroutine(SwapPiecesAnimation(firstSelectedPiece, secondSelectedPiece));
-
         }
         else
         {
-            //eþleþen taþlarý yok et
-            DestroyMatches(firsPieceMatches);
-            DestroyMatches(secondPieceMatches);
+            List<GameObject> allMatches = firstPieceMatches.Union(secondPieceMatches).ToList();
+            //eþleþenleri yok et
+            DestroyMatches(allMatches);
+
+            //Tablayý doldurmak için yeni ana fonksiyonumuzu çaðýralým
+            yield return StartCoroutine(RefillBoard());
+
+            //Zincirleme eþleþmeleri kontrol et
+            while (FindAllMatchesOnBoard().Count > 0)
+            {
+                DestroyMatches(FindAllMatchesOnBoard());
+                yield return StartCoroutine(RefillBoard());
+            }
         }
+
         firstSelectedPiece = null;
         secondSelectedPiece = null;
     }
 
-    //Sadece animasyon ve yer deðiþtirme iþlemi
     private IEnumerator SwapPiecesAnimation(Piece piece1, Piece piece2)
     {
         Vector2 piece1Position = piece1.transform.position;
@@ -126,66 +129,29 @@ public class Board : MonoBehaviour
             elapsedTime += Time.deltaTime;
             yield return null;
         }
+
+        // Animasyon sonunda pozisyonlarýn tam olduðundan emin ol
         piece1.transform.position = piece2Position;
-        piece2.transform.position = piece1Position;
+        piece2.transform.position = piece1Position; // <-- DÜZELTÝLMÝÞ SATIR
     }
 
-    //Belirli bir kordinattaki taþ için yatay ve dikey eþleþmeleri bulan fonksiyon
     private List<GameObject> FindMatchesAt(int x, int y)
     {
-        List<GameObject> combinendMatches = new List<GameObject>();
+        List<GameObject> combinedMatches = new List<GameObject>();
         GameObject centerPiece = allPieces[x, y];
-        if (centerPiece == null) return combinendMatches;
-        //yatay eþleþme kontrolü
+        if (centerPiece == null) return combinedMatches;
+
         List<GameObject> horizontalMatches = new List<GameObject> { centerPiece };
-        //sola doðru kontrol et
-        for (int i = x - 1; i <= 0; i--)
-        {
-            if (allPieces[i, y] != null && allPieces[i, y].tag == centerPiece.tag)
-            {
-                horizontalMatches.Add(allPieces[i, y]);
-            }
-            else
-                break;
-        }
-        //saða doðru kontrol et
-        for (int i = x + 1; i < width; i++)
-        {
-            if (allPieces[i, y] != null && allPieces[i, y].tag == centerPiece.tag)
-            {
-                horizontalMatches.Add(allPieces[i, y]);
-            }
-            else
-                break;
+        for (int i = x - 1; i >= 0; i--) { if (allPieces[i, y] != null && allPieces[i, y].tag == centerPiece.tag) horizontalMatches.Add(allPieces[i, y]); else break; }
+        for (int i = x + 1; i < width; i++) { if (allPieces[i, y] != null && allPieces[i, y].tag == centerPiece.tag) horizontalMatches.Add(allPieces[i, y]); else break; }
+        if (horizontalMatches.Count >= 3) combinedMatches.AddRange(horizontalMatches);
 
-        }
-        if (horizontalMatches.Count >= 3)
-            combinendMatches.AddRange(horizontalMatches);
-
-        //dikey eþleþme kontrolü
         List<GameObject> verticalMatches = new List<GameObject> { centerPiece };
-        //aþaðý kontrol et
-        for (int i = y - 1; i >= 0; i--)
-        {
-            if (allPieces[x, i] != null && allPieces[x, i].tag == centerPiece.tag)
-                verticalMatches.Add(allPieces[x, i]);
-            else
-                break;
+        for (int i = y - 1; i >= 0; i--) { if (allPieces[x, i] != null && allPieces[x, i].tag == centerPiece.tag) verticalMatches.Add(allPieces[x, i]); else break; }
+        for (int i = y + 1; i < height; i++) { if (allPieces[x, i] != null && allPieces[x, i].tag == centerPiece.tag) verticalMatches.Add(allPieces[x, i]); else break; }
+        if (verticalMatches.Count >= 3) combinedMatches.AddRange(verticalMatches);
 
-        }
-
-        //yukarý kontrol et
-        for (int i = y + 1; i < height; i++)
-        {
-            if (allPieces[x, i] != null && allPieces[x, i].tag == centerPiece.tag)
-                verticalMatches.Add(allPieces[x, i]);
-            else
-                break;
-        }
-        if (verticalMatches.Count >= 3)
-            combinendMatches.AddRange(verticalMatches);
-
-        return combinendMatches;
+        return combinedMatches;
     }
 
     void DestroyMatches(List<GameObject> matches)
@@ -199,8 +165,104 @@ public class Board : MonoBehaviour
             }
         }
     }
-}
+    //Tablayý yeniden dolduran ana Coroutine 
+    private IEnumerator RefillBoard()
+    {
+        yield return StartCoroutine(CollapseColumns());
+        yield return StartCoroutine(FillTopRows());
+    }
 
+    //sütunlardaki boþluklarý kapatmak için yerçekimi
+    private IEnumerator CollapseColumns()
+    {
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                if (allPieces[x, y] == null)
+                {
+                    // yukarda dolu kare ara
+                    for (int k = y + 1; k < height; k++)
+                    { 
+                        if (allPieces[x, k] != null)
+                        {
+                            //parçaya yerçekimi uygula
+                            allPieces[x, y] = allPieces[x, k];
+                            allPieces[x, k] = null;
+                            allPieces[x, y].GetComponent<Piece>().y = y;
+                            StartCoroutine(MovePieceToPosition(allPieces[x, y], new Vector2(x, y)));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        yield return new WaitForSeconds(0.4f);
+    }
+    //Üst satýrlara yeni parçalar ekle
+    private IEnumerator FillTopRows()
+    {
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                if (allPieces[x, y] == null)
+                {
+                    Vector2 position = new Vector2(x, height);
+                    int randomPieceIndex = Random.Range(0, piecePrefabs.Length);
+                    GameObject pieceObject = Instantiate(piecePrefabs[randomPieceIndex], position, Quaternion.identity);
 
+                    //Gerekli ayaralrý yap ve mantýksal tablaya ekle
+                    pieceObject.transform.parent = this.transform;
+                    pieceObject.name = "Piece (" + x + ", " + y + ")";
+                    Piece pieceScript = pieceObject.GetComponent<Piece>();
+                    pieceScript.x = x;
+                    pieceScript.y = y;
+                    allPieces[x, y] = pieceObject;
 
+                    //ve son olarak animasyonlu olmasý gereken yere indir
+                    StartCoroutine(MovePieceToPosition(pieceObject, new Vector2(x, y)));
+                }
+            }
+        }
+        yield return new WaitForSeconds(0.4f);
+    }
     
+    //taþý belirli posisyona animasyonla götür
+    private IEnumerator MovePieceToPosition(GameObject piece, Vector2 targetPosition)
+    {
+        float duration = 0.3f;
+        float elapsedTime = 0;
+        Vector2 startPosition = piece.transform.position;
+        while (elapsedTime < duration)
+        {
+            if (piece == null) yield break;
+
+            piece.transform.position = Vector2.Lerp(startPosition, targetPosition, elapsedTime / duration);
+            elapsedTime += Time.deltaTime;
+            yield return null;
+        }
+        if (piece != null)
+            piece.transform.position = targetPosition;
+    }
+
+    //Tablodaki tüm eþleþmeleri bul(zincirleme için)
+    private List<GameObject> FindAllMatchesOnBoard()
+    {
+        List<GameObject> allMatches = new List<GameObject>();
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                if (allPieces[x, y] != null)
+                {
+                    allMatches.AddRange(FindMatchesAt(x, y));
+                }
+            }
+
+        }
+        //Duplikasyonlarý sil 
+        return allMatches.Distinct().ToList();
+    }
+
+}
